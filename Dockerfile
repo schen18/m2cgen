@@ -31,7 +31,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
         wget && \
     locale-gen $LC_ALL && \
     update-locale && \
-    add-apt-repository ppa:deadsnakes/ppa -y && \
+    if [ "$python" != "3.12" ]; then add-apt-repository ppa:deadsnakes/ppa -y; fi && \
     wget -q https://packages.microsoft.com/config/ubuntu/$(. /etc/os-release && echo $VERSION_ID)/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
     dpkg -i packages-microsoft-prod.deb && \
     wget -qO- https://sh.rustup.rs | sh -s -- --no-modify-path --default-toolchain stable -y && \

@@ -398,7 +398,11 @@ def format_arg(value):
     if np.isnan(value):
         return "NaN"
 
-    return format_float(value)
+    # format at float64 precision: np.format_float_positional on a float32
+    # value produces its shortest float32 representation, which is a
+    # different double than the exact value and can flip tree-threshold
+    # comparisons in the generated code
+    return format_float(np.float64(value))
 
 
 def write_content_to_file(content, path):

@@ -3,7 +3,7 @@
 set -e
 
 if [[ $TEST == "API" ]]; then
-  make flake8 isort-check test-api run-codecov generate-code-examples
+  make flake8 isort-check test-api generate-code-examples
 fi
 
 if [[ $TEST == "E2E" ]]; then

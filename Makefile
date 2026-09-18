@@ -35,13 +35,6 @@ pre-pr: install-requirements flake8 isort test-api
 generate-code-examples: install-develop
 	python tools/generate_code_examples.py ./generated_code_examples
 
-download-codecov:
-	wget -q https://uploader.codecov.io/latest/linux/codecov -O codecov && \
-		chmod +x codecov
-
-run-codecov: download-codecov
-	./codecov -f coverage.xml -Z
-
 docker-build:
 	docker build -t $(DOCKER_IMAGE) .
 

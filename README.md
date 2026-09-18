@@ -1,7 +1,6 @@
 # m2cgen
 
 [![GitHub Actions Status](https://github.com/schen18/m2cgen/workflows/GitHub%20Actions/badge.svg?branch=master)](https://github.com/schen18/m2cgen/actions)
-[![Coverage Status](https://codecov.io/gh/schen18/m2cgen/branch/master/graph/badge.svg)](https://codecov.io/gh/schen18/m2cgen)
 [![License: MIT](https://img.shields.io/github/license/schen18/m2cgen.svg)](https://github.com/schen18/m2cgen/blob/master/LICENSE)
 [![Python Versions](https://img.shields.io/pypi/pyversions/m2cgen-refresh.svg?logo=python&logoColor=white)](https://pypi.org/project/m2cgen-refresh)
 [![PyPI Version](https://img.shields.io/pypi/v/m2cgen-refresh.svg?logo=pypi&logoColor=white)](https://pypi.org/project/m2cgen-refresh)

@@ -38,12 +38,16 @@ class WittgensteinRuleModelAssembler(ModelAssembler):
         weighted_counts = []
         weighted_freq_sums = []
         for rule in ruleset.rules:
+            # 1.0/0.0 indicator of whether the rule covers the sample; the
+            # constants are weighted by multiplying with it instead of
+            # branching on it (strictly typed targets cannot use a numeric
+            # expression as an if-condition)
             match = self._rule_match_expr(rule)
             freqs = np.asarray(rule.smoothed_class_freqs_, dtype=np.float64)
-            weighted_counts.append(ast.IfExpr(
-                match, ast.NumVal(freqs.sum()), ast.NumVal(0.0)))
-            weighted_freq_sums.append(ast.IfExpr(
-                match, self._vector(freqs), self._zero_vector()))
+            weighted_counts.append(utils.mul(
+                ast.NumVal(freqs.sum()), match))
+            weighted_freq_sums.append(utils.apply_bin_op(
+                self._vector(freqs), match, ast.BinNumOpType.MUL))
 
         default_freqs = np.asarray(
             ruleset.smoothed_uncovered_class_freqs_, dtype=np.float64)
@@ -122,7 +126,3 @@ class WittgensteinRuleModelAssembler(ModelAssembler):
     @staticmethod
     def _vector(values):
         return ast.VectorVal([ast.NumVal(v) for v in values])
-
-    @staticmethod
-    def _zero_vector():
-        return ast.VectorVal([ast.NumVal(0.0), ast.NumVal(0.0)])
