@@ -1,7 +1,8 @@
-FROM ubuntu:24.04
-
-# 24.04 ships python3.12; other versions come from deadsnakes
+# The matrix Python versions come from the official images; the language
+# toolchains (dotnet for C#/Visual Basic, OpenJDK, Node.js for the
+# JavaScript executor, PHP, PowerShell, Rust) from Debian + Microsoft repos.
 ARG python=3.12
+FROM python:${python}-slim-bookworm
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
     PATH="/root/.cargo/bin:$PATH" \
@@ -22,17 +23,14 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     apt-get update && \
     apt-get install --no-install-recommends -y \
         apt-transport-https \
+        ca-certificates \
         dirmngr \
-        dpkg-dev \
-        gpg-agent \
-        locales \
-        software-properties-common \
         gnupg2 \
+        locales \
         wget && \
     locale-gen $LC_ALL && \
     update-locale && \
-    if [ "$python" != "3.12" ]; then add-apt-repository ppa:deadsnakes/ppa -y; fi && \
-    wget -q https://packages.microsoft.com/config/ubuntu/$(. /etc/os-release && echo $VERSION_ID)/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
+    wget -q https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
     dpkg -i packages-microsoft-prod.deb && \
     wget -qO- https://sh.rustup.rs | sh -s -- --no-modify-path --default-toolchain stable -y && \
     apt-get update && \
@@ -44,14 +42,10 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
         nodejs \
         openjdk-17-jdk-headless \
         php \
-        powershell \
-        python${python}-dev \
-        python3-setuptools && \
+        powershell && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /m2cgen
 
 COPY requirements-test.txt ./
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python${python} 1 && \
-    wget -qO- https://bootstrap.pypa.io/get-pip.py | python && \
-    pip install --no-cache-dir -r requirements-test.txt
+RUN pip install --no-cache-dir -r requirements-test.txt

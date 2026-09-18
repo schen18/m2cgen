@@ -33,7 +33,10 @@ install-develop:
 pre-pr: install-requirements flake8 isort test-api
 
 generate-code-examples: install-develop
-	python tools/generate_code_examples.py ./generated_code_examples
+	# run as a module so that the repository root is on sys.path: the
+	# wittgenstein wheel ships a top-level `tests` package which would
+	# otherwise shadow the repository's own tests package
+	python -m tools.generate_code_examples ./generated_code_examples
 
 docker-build:
 	docker build -t $(DOCKER_IMAGE) .
