@@ -30,27 +30,24 @@ jobs:
           fetch-depth: 5
       - name: Build Docker image
         run: docker build . --file Dockerfile -t m2cgen-docker --build-arg python=${{ matrix.python }}
+      - name: Run tests (lint)
+        if: matrix.lang == 'API'
+        run: docker run --ulimit stack=-1 -v "$GITHUB_WORKSPACE":"/m2cgen" m2cgen-docker make flake8 isort-check
+      - name: Run tests (unit)
+        if: matrix.lang == 'API'
+        run: docker run --ulimit stack=-1 -v "$GITHUB_WORKSPACE":"/m2cgen" m2cgen-docker make test-api
+      - name: Run tests (code examples)
+        if: matrix.lang == 'API'
+        run: docker run --ulimit stack=-1 -v "$GITHUB_WORKSPACE":"/m2cgen" m2cgen-docker make generate-code-examples
       - name: Run tests
+        if: matrix.lang != 'API'
         run: |
-          if [[ "${{ matrix.lang }}" == "API" ]]; then
-            export TEST="API";
-          else
-            export TEST="E2E";
-          fi
+          export TEST="E2E";
           docker run \
             --ulimit stack=-1 \
             -v "$GITHUB_WORKSPACE":"/m2cgen" \
             -e TEST \
             -e LANG="${{ matrix.lang }}" \
-            -e GITHUB_ACTIONS \
-            -e GITHUB_WORKFLOW \
-            -e GITHUB_RUN_ID \
-            -e GITHUB_SHA \
-            -e GITHUB_REF \
-            -e GITHUB_HEAD_REF \
-            -e GITHUB_REPOSITORY \
-            -e GITHUB_SERVER_URL \
-            -e GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             m2cgen-docker \
             bash /m2cgen/.ci/test.sh
       - name: Generate artifact with code examples
