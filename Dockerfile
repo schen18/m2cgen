@@ -39,6 +39,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
         g++ \
         gcc \
         git \
+        make \
         nodejs \
         openjdk-17-jdk-headless \
         php \
