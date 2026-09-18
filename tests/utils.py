@@ -1,0 +1,405 @@
+import subprocess
+from contextlib import contextmanager
+from functools import partial, wraps
+from itertools import product
+from pathlib import Path
+from shutil import rmtree
+from tempfile import mkdtemp
+
+import lightgbm as lgb
+import numpy as np
+import pytest
+import statsmodels.api as sm
+import xgboost as xgb
+from sklearn import datasets
+from sklearn.base import BaseEstimator, RegressorMixin, clone
+from sklearn.cluster import BisectingKMeans, KMeans, MiniBatchKMeans
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.ensemble import IsolationForest
+from sklearn.ensemble._forest import BaseForest, ForestClassifier
+from sklearn.linear_model._base import LinearClassifierMixin
+from sklearn.mixture._base import BaseMixture
+from sklearn.model_selection import train_test_split
+from sklearn.naive_bayes import BernoulliNB, ComplementNB, GaussianNB, MultinomialNB
+from sklearn.svm import SVC, NuSVC, OneClassSVM
+from sklearn.svm._base import BaseLibSVM
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree._classes import BaseDecisionTree
+
+from m2cgen import ast, export_to_python
+from m2cgen.assemblers import _get_full_model_name
+from m2cgen.interpreters.utils import format_float
+
+
+class StatsmodelsSklearnLikeWrapper(BaseEstimator, RegressorMixin):
+    def __init__(self, model, params):
+        self.model = model
+        self.params = params
+        # mock class module and name to show appropriate model name in tests
+        self.__class__.__module__ = model.__module__
+        self.__class__.__name__ = model.__name__
+
+    def fit(self, X, y):
+        init_params = self.params.get("init", {})
+        self.fit_intercept_ = init_params.pop("fit_intercept", False)
+        if self.fit_intercept_:
+            X = sm.add_constant(X)
+        est = self.model(y, X, **init_params)
+        if "fit_regularized" in self.params:
+            self.fitted_model_ = est.fit_regularized(**self.params["fit_regularized"])
+        elif "iterative_fit" in self.params:
+            self.fitted_model_ = est.iterative_fit(**self.params["iterative_fit"])
+        elif "fit_constrained" in self.params:
+            self.fitted_model_ = est.fit_constrained(**self.params["fit_constrained"])
+        else:
+            self.fitted_model_ = est.fit(**self.params.get("fit", {}))
+        # mock class module and name to show appropriate model name in tests
+        self.__class__.__module__ = type(self.fitted_model_).__module__
+        self.__class__.__name__ = type(self.fitted_model_).__name__
+        return self.fitted_model_
+
+    def predict(self, X):
+        if self.fit_intercept_:
+            X = sm.add_constant(X)
+        return self.fitted_model_.predict(X)
+
+
+class ModelTrainer:
+
+    _class_instances = {}
+
+    def __init__(self, dataset_name, test_fraction):
+        self.dataset_name = dataset_name
+        self.test_fraction = test_fraction
+        additional_test_data = None
+        np.random.seed(seed=7)
+        if dataset_name == "boston":
+            # load_boston was removed from scikit-learn in 1.2;
+            # load_diabetes is a bundled dataset of similar scale.
+            self.name = "train_model_regression"
+            self.X, self.y = datasets.load_diabetes(return_X_y=True)
+        elif dataset_name == "boston_y_bounded":
+            self.name = "train_model_regression_bounded"
+            self.X, self.y = datasets.load_diabetes(return_X_y=True)
+            # spread targets over (0.1, 0.9): the arctan transform used
+            # previously compressed them too much for some GLM link functions
+            self.y = np.interp(self.y, (self.y.min(), self.y.max()),
+                               (0.3, 0.7))
+        elif dataset_name == "diabetes":
+            self.name = "train_model_regression_w_missing_values"
+            self.X, self.y = datasets.load_diabetes(return_X_y=True)
+            additional_test_data = np.array([
+                [np.nan] * self.X.shape[1],
+            ])
+        elif dataset_name == "iris":
+            self.name = "train_model_classification"
+            self.X, self.y = datasets.load_iris(return_X_y=True)
+        elif dataset_name == "breast_cancer":
+            self.name = "train_model_classification_binary"
+            self.X, self.y = datasets.load_breast_cancer(return_X_y=True)
+        elif dataset_name == "regression_rnd":
+            self.name = "train_model_regression_random_data"
+            N = 1000
+            self.X = np.random.random(size=(N, 200))
+            self.y = np.random.random(size=(N,))
+        elif dataset_name == "classification_rnd":
+            self.name = "train_model_classification_random_data"
+            N = 1000
+            self.X = np.random.random(size=(N, 200))
+            self.y = np.random.randint(3, size=(N,))
+        elif dataset_name == "classification_rnd_w_missing_values":
+            self.name = "train_model_classification_rnd_w_missing_values"
+            N = 100
+            self.X = np.random.random(size=(N, 20)) - 0.5
+            self.y = np.random.randint(3, size=(N,))
+            additional_test_data = np.array([
+                [np.nan] * self.X.shape[1],
+            ])
+        elif dataset_name == "classification_binary_rnd":
+            self.name = "train_model_classification_binary_random_data"
+            N = 1000
+            self.X = np.random.random(size=(N, 200))
+            self.y = np.random.randint(2, size=(N,))
+        elif dataset_name == "classification_binary_rnd_w_missing_values":
+            self.name = "train_model_classification_binary_rnd_w_missing_values"
+            N = 100
+            self.X = np.random.random(size=(N, 20)) - 0.5
+            self.y = np.random.randint(2, size=(N,))
+            additional_test_data = np.array([
+                [np.nan] * self.X.shape[1],
+            ])
+        else:
+            raise ValueError(f"Unknown dataset name: {dataset_name}")
+
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
+            self.X, self.y, test_size=test_fraction, random_state=15)
+        if additional_test_data is not None:
+            self.X_test = np.vstack((additional_test_data, self.X_test))
+
+    @classmethod
+    def get_instance(cls, dataset_name, test_fraction=0.02):
+        key = f"{dataset_name} {test_fraction}"
+        if key not in cls._class_instances:
+            cls._class_instances[key] = ModelTrainer(dataset_name, test_fraction)
+        return cls._class_instances[key]
+
+    def __call__(self, estimator):
+        fitted_estimator = estimator.fit(self.X_train, self.y_train)
+        if fitted_estimator is None:
+            # some libraries (e.g. wittgenstein) don't return self from fit
+            fitted_estimator = estimator
+
+        if isinstance(
+                estimator,
+                (
+                    LinearClassifierMixin,
+                    LinearDiscriminantAnalysis,
+                    SVC,
+                    NuSVC,
+                    OneClassSVM,
+                )):
+            y_pred = estimator.decision_function(self.X_test)
+        elif isinstance(
+                estimator,
+                (
+                    KMeans,
+                    MiniBatchKMeans,
+                    BisectingKMeans,
+                )):
+            y_pred = estimator.transform(self.X_test)
+        elif isinstance(estimator, BaseMixture):
+            y_pred = estimator.predict_proba(self.X_test)
+        elif isinstance(estimator, IsolationForest):
+            y_pred = estimator.decision_function(self.X_test)
+        elif isinstance(
+                estimator,
+                (
+                    GaussianNB,
+                    MultinomialNB,
+                    ComplementNB,
+                    BernoulliNB,
+                )):
+            y_pred = estimator.predict_proba(self.X_test)
+        elif hasattr(estimator, "ruleset_"):
+            # wittgenstein rule-based classifiers expect a
+            # DataFrame with the training feature names
+            import pandas as pd
+            X_test = pd.DataFrame(
+                self.X_test, columns=estimator.trainset_features_)
+            y_pred = estimator.predict_proba(X_test)
+        elif isinstance(
+                estimator,
+                (
+                    ForestClassifier,
+                    DecisionTreeClassifier,
+                    xgb.XGBClassifier,
+                    lgb.LGBMClassifier,
+                )):
+            y_pred = estimator.predict_proba(self.X_test)
+        else:
+            y_pred = estimator.predict(self.X_test)
+
+        # Some models force input data to be particular type
+        # during prediction phase in their native Python libraries.
+        # For correct comparison of testing results we mimic the same behavior
+        if isinstance(
+                estimator,
+                (
+                    BaseDecisionTree,
+                    BaseForest,
+                )):
+            self.X_test = np.asarray(self.X_test, dtype=np.float32)
+        elif isinstance(
+                estimator,
+                (
+                    BaseLibSVM,
+                )):
+            self.X_test = np.asarray(self.X_test, dtype=np.float64)
+
+        return self.X_test, y_pred, fitted_estimator
+
+
+def cmp_exprs(left, right):
+    """Recursively compares two ast expressions."""
+
+    if isinstance(left, ast.VectorVal) and isinstance(right, ast.Expr):
+        left_exprs = left.exprs
+        right_exprs = right.exprs
+        assert len(left_exprs) == len(right_exprs)
+        for left_expr, right_expr in zip(left_exprs, right_exprs):
+            assert cmp_exprs(left_expr, right_expr)
+        return True
+
+    if not isinstance(left, ast.Expr) and not isinstance(right, ast.Expr):
+        if _is_float(left) and _is_float(right):
+            comp_res = np.isclose(left, right)
+        else:
+            comp_res = left == right
+        assert comp_res, f"{left} != {right}"
+        return True
+
+    if isinstance(left, ast.Expr) and isinstance(right, ast.Expr):
+        assert isinstance(left, type(right)), f"Expected instance of {type(right)}, received {type(left)}"
+
+        # Only compare attributes which don't start with __
+        attrs_to_compare = filter(lambda attr_name: not attr_name.startswith('__'), dir(left))
+
+        for attr_name in attrs_to_compare:
+            assert cmp_exprs(getattr(left, attr_name), getattr(right, attr_name))
+
+        return True
+
+    return False
+
+
+def assert_code_equal(actual, expected):
+    assert actual.strip() == expected.strip()
+
+
+get_regression_model_trainer = partial(ModelTrainer.get_instance, "boston")
+
+
+get_classification_model_trainer = partial(ModelTrainer.get_instance, "iris")
+
+
+get_binary_classification_model_trainer = partial(ModelTrainer.get_instance, "breast_cancer")
+
+
+get_regression_random_data_model_trainer = partial(ModelTrainer.get_instance, "regression_rnd")
+
+
+get_classification_random_data_model_trainer = partial(ModelTrainer.get_instance, "classification_rnd")
+
+
+get_classification_binary_random_data_model_trainer = partial(ModelTrainer.get_instance, "classification_binary_rnd")
+
+
+get_bounded_regression_model_trainer = partial(ModelTrainer.get_instance, "boston_y_bounded")
+
+
+get_regression_w_missing_values_model_trainer = partial(ModelTrainer.get_instance, "diabetes")
+
+
+get_classification_random_w_missing_values_model_trainer = partial(
+    ModelTrainer.get_instance, "classification_rnd_w_missing_values")
+
+
+get_classification_binary_random_w_missing_values_model_trainer = partial(
+    ModelTrainer.get_instance, "classification_binary_rnd_w_missing_values")
+
+
+@contextmanager
+def tmp_dir():
+    dirpath = Path(mkdtemp())
+    try:
+        yield dirpath
+    finally:
+        rmtree(dirpath)
+
+
+def assert_model_predictions_match(trainer, estimator):
+    """Trains the estimator with the given ModelTrainer instance, transpiles
+    the fitted model into Python code and asserts that the generated code
+    reproduces the trainer's predictions.
+
+    Used by assembler tests whose expected output depends on fitted values
+    (and therefore on the exact library version used for training) instead of
+    version-brittle exact-AST fixtures. Returns the fitted estimator so that
+    callers can additionally assert structural properties of the AST.
+    """
+    X_test, y_pred, fitted_estimator = trainer(estimator)
+
+    scope = {}
+    exec(export_to_python(fitted_estimator), scope)
+    score = scope["score"]
+
+    for idx, expected in enumerate(y_pred):
+        actual = np.atleast_1d(score(X_test[idx].tolist()))
+        assert np.allclose(actual, np.atleast_1d(expected)), (
+            f"Sample {idx}: {actual} != {expected}")
+
+    return fitted_estimator
+
+
+def verify_python_model_is_expected(model_code, input, expected_output):
+    input_str = f"[{', '.join(map(str, input))}]"
+    code = f"""
+{model_code}
+result = score({input_str})"""
+
+    context = {}
+    exec(code, context)
+
+    assert np.isclose(context["result"], expected_output)
+
+
+def execute_command(exec_args, shell=False):
+    result = subprocess.Popen(exec_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=shell)
+    stdout, stderr = result.communicate()
+    if result.returncode != 0:
+        raise RuntimeError(f"Bad exit code ({result.returncode}), stderr:\n{stderr.decode('utf-8')}")
+    return stdout.decode("utf-8").strip()
+
+
+def predict_from_commandline(exec_args):
+    items = execute_command(exec_args).split(" ")
+    if len(items) == 1:
+        return np.float64(items[0])
+    else:
+        return [np.float64(i) for i in items]
+
+
+def cartesian_e2e_params(executors_with_marks, models_with_trainers_with_marks,
+                         skip_executor_trainer_pairs, *additional_params):
+    result_params = list(additional_params)
+
+    # Specifying None for additional parameters makes pytest to generate
+    # automatic ids. If we don't do this pytest will throw exception that
+    # number of parameters doesn't match number of provided ids
+    ids = [None] * len(additional_params)
+
+    prod = product(executors_with_marks, models_with_trainers_with_marks)
+
+    for (executor, executor_mark), (model, trainer, trainer_mark) in prod:
+        if (executor_mark, trainer_mark) in skip_executor_trainer_pairs:
+            continue
+
+        # Since we reuse the same model across multiple tests we want it
+        # to be clean.
+        model = clone(model)
+
+        # We use custom id since pytest for some reason can't show name of
+        # the model in the automatic id. Which sucks.
+        ids.append(f"{_get_full_model_name(model)} - {executor_mark.name} - {trainer.name}")
+
+        result_params.append(pytest.param(
+            model, executor, trainer, marks=[executor_mark, trainer_mark],
+        ))
+
+    param_names = "estimator,executor_cls,model_trainer"
+
+    def wrap(func):
+
+        @pytest.mark.parametrize(param_names, result_params, ids=ids)
+        @wraps(func)
+        def inner(*args, **kwarg):
+            return func(*args, **kwarg)
+
+        return inner
+
+    return wrap
+
+
+def _is_float(value):
+    return isinstance(value, (float, np.floating))
+
+
+def format_arg(value):
+    if np.isnan(value):
+        return "NaN"
+
+    return format_float(value)
+
+
+def write_content_to_file(content, path):
+    path.write_text(content, encoding="utf-8")
