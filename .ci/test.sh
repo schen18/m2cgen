@@ -7,7 +7,7 @@ if [[ $TEST == "API" ]]; then
 fi
 
 if [[ $TEST == "E2E" ]]; then
-  python setup.py install
+  pip install --no-deps .
   rm -rfd m2cgen/
   EXTRA_ARGS=""
   # SQL macros of large models are slow to evaluate row-by-row; DuckDB is a

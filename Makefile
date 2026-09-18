@@ -28,7 +28,7 @@ install-requirements:
 	pip install -r requirements-test.txt
 
 install-develop:
-	python setup.py develop
+	pip install -e .
 
 pre-pr: install-requirements flake8 isort test-api
 

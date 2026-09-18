@@ -32,7 +32,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     locale-gen $LC_ALL && \
     update-locale && \
     add-apt-repository ppa:deadsnakes/ppa -y && \
-    wget -q https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
+    wget -q https://packages.microsoft.com/config/ubuntu/$(. /etc/os-release && echo $VERSION_ID)/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
     dpkg -i packages-microsoft-prod.deb && \
     wget -qO- https://sh.rustup.rs | sh -s -- --no-modify-path --default-toolchain stable -y && \
     apt-get update && \

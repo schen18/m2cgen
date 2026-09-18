@@ -28,15 +28,13 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
-        "Programming Language :: Python :: 3.14",
     ],
     keywords=("sklearn statsmodels xgboost lightgbm "
               "machine-learning ml regression classification "
               "transpilation code-generation"),
-    python_requires=">=3.11",
+    python_requires=">=3.12",
     install_requires=[
         "numpy",
     ],

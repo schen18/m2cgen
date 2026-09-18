@@ -24,4 +24,5 @@ pytest-cov==7.0.0
 # modern Python; the JavaScript e2e executor uses a Node.js subprocess instead.
 
 # Publishing
+build
 twine
