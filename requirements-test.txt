@@ -2,7 +2,7 @@
 # Python >= 3.12 required by xgboost>=3.3; scikit-learn 1.9 needs >= 3.11.
 
 # Other stuff
-numpy==2.5.2
+numpy==2.5.4
 scipy==1.18.0
 
 # Supported models
