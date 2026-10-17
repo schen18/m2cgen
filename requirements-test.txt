@@ -18,7 +18,7 @@ flake8==7.3.0
 isort==9.0.1
 pytest==9.0.2
 pytest-mock==3.15.1
-pytest-cov==7.0.0
+pytest-cov==7.1.0
 
 # NOTE: py-mini-racer (JS e2e executor of the original project) does not work on
 # modern Python; the JavaScript e2e executor uses a Node.js subprocess instead.
