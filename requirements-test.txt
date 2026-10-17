@@ -6,7 +6,7 @@ numpy==2.5.2
 scipy==1.18.0
 
 # Supported models
-scikit-learn==1.9.0
+scikit-learn==1.9.1
 xgboost==3.4.1
 lightgbm==4.7.0
 statsmodels==0.15.0
